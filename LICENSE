@@ -1,0 +1,29 @@
+                    GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+                            Preamble
+
+  The GNU Affero General Public License is a free, copyleft license for
+software and other kinds of works, specifically designed to ensure
+cooperation with the community in the case of network server software.
+
+  [Full AGPL v3.0 text would be included here]
+  
+  See https://www.gnu.org/licenses/agpl-3.0.txt for the complete license text.
+
+---
+
+Additional Terms for UEWM:
+
+1. Pre-trained model weights, LoRA adapters, calibration datasets, and 
+   customer-specific knowledge are NOT covered by this license and remain
+   proprietary to their respective owners.
+
+2. The UEWM name, logo, and brand assets are trademarks and are not 
+   licensed under AGPL.
+
+3. For commercial licensing options, contact: license@your-org.com

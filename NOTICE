@@ -1,0 +1,17 @@
+UEWM — Universal Engineering World Model
+Copyright (c) 2026 [Your Organization Name]
+
+This product is licensed under the GNU Affero General Public License v3.0.
+See the LICENSE file for details.
+
+This product includes software developed by third parties:
+
+- PyTorch (BSD-style license) — https://pytorch.org/
+- gRPC (Apache 2.0) — https://grpc.io/
+- Apache Kafka (Apache 2.0) — https://kafka.apache.org/
+- Redis (BSD-3-Clause) — https://redis.io/
+- PostgreSQL (PostgreSQL License) — https://www.postgresql.org/
+- MLflow (Apache 2.0) — https://mlflow.org/
+- Kubernetes (Apache 2.0) — https://kubernetes.io/
+- Prometheus (Apache 2.0) — https://prometheus.io/
+- Grafana (AGPL 3.0) — https://grafana.com/

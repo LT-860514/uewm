@@ -1,0 +1,1 @@
+"""UEWM knowledge module."""
