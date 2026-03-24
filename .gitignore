@@ -130,3 +130,9 @@ coverage.xml
 # ===== Helm =====
 helm/uewm/charts/
 *.tgz
+
+# ===== Doc =====
+docs/en/requirements/arch*
+docs/en/design/arch*
+docs/zh/requirements/arch*
+docs/zh/design/arch*

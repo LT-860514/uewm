@@ -33,38 +33,17 @@ Think of it as an AI that doesn't just write code — it *understands* your enti
 
 ### Features
 
-- **🧠 H-JEPA Brain Core** — 8-layer latent space (Z_market → Z_impl → Z_phys) with hierarchical prediction across multiple timescales
-- **⚡ EBM Decision Engine** — Energy-based arbitration that evaluates proposals by predicting their full-system impact, not just local correctness
-- **🤖 12 Specialized AI Agents** — Three-ring architecture (Inner/Middle/Outer) with dynamic Level of Automation (LOA 1-10) controlled by the ALFA framework
-- **🔄 Self-Evolution** — LoRA-based continuous learning with safety envelope, circuit breaker, and Pareto improvement constraints
-- **🛡️ Enterprise Security** — Threat model T1-T5, RBAC with 8 roles × 7 permissions, SOC 2 compliance roadmap, penetration test plan
-- **📡 EIP Protocol** — Strong-typed gRPC + Kafka communication protocol with 15+ message types
-- **🔐 Privacy-Preserving Knowledge Transfer** — KSL-tiered (0-4) federated learning with differential privacy (ε-budget)
-- **📊 TRL Maturity Model** — Technology Readiness Levels (0-5) drive system behavior automatically
+For detailed information on UEWM's core capabilities, please refer to the specific design documents:
+- **[H-JEPA Brain Core & Architecture](docs/en/design/UEWM_Architecture_deliver_v1.1.md)**
+- **[12 Specialized AI Agents](docs/en/design/UEWM_Agents_Design_deliver_v1.1.md)**
+- **[Self-Evolution Mechanisms](docs/en/design/UEWM_Self_Evolution_deliver_v1.1.md)**
+- **[Enterprise Security & Governance](docs/en/design/UEWM_Safety_Governance_deliver_v1.1.md)**
+- **[EIP Protocol Specifications](docs/en/design/UEWM_EIP_Protocol_deliver_v1.1.md)**
+- **[Data & Privacy Strategy](docs/en/design/UEWM_Data_Strategy_deliver_v1.1.md)**
 
 ### Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│              External World (Code / CI / Monitoring)         │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│         Multi-Modal Perception Layer (8 Encoders)            │
-│         CodeBERT │ TFT │ TimesFM │ GraphSAGE+BERT           │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│                    H-JEPA Brain Core                          │
-│  Z-Buffer │ JEPA Predictor │ EBM Arbiter │ Causal Graph     │
-│  Orchestration │ TRL Evaluator │ Error Budget │ Evolution    │
-└──────────────────────────┬──────────────────────────────────┘
-                           │ EIP Protocol (gRPC + Kafka)
-┌──────────────────────────▼──────────────────────────────────┐
-│              12 AI Agents (Three-Ring)                        │
-│  Outer: PA│PD│BI│PR   Middle: SA│FD│AU   Inner: CD│CT│DO│ST│MA│
-└─────────────────────────────────────────────────────────────┘
-```
+Please refer to the comprehensive **[System Architecture Design](docs/en/design/UEWM_Architecture_deliver_v1.1.md)** document for detailed architectural diagrams, Brain Core component breakdowns, and sequence interactions.
 
 ### Quickstart
 
@@ -92,20 +71,23 @@ cd uewm
 
 ### Documentation
 
-📖 **[Full documentation →](docs/en/)**
+📖 **[Full English documentation →](docs/en/)** | 📖 **[完整中文文档 →](docs/zh/)**
 
-| Document | Description |
-|----------|-------------|
-| [Architecture V7.0](docs/en/architecture/UEWM_Architecture_V7.md) | Core system architecture, Brain Core components, H-JEPA, EBM |
-| [EIP Protocol V3.0](docs/en/architecture/UEWM_EIP_Protocol_V3.md) | Communication protocol, Protobuf IDL, JSON examples |
-| [Agents Design V6.0](docs/en/design/UEWM_Agents_Design_V6.md) | 12 Agents, three-ring, ALFA, adapters |
-| [Self Evolution V8.0](docs/en/design/UEWM_Self_Evolution_V8.md) | Safety envelope, circuit breaker, Pareto, federated learning |
-| [Safety & Governance V6.0](docs/en/design/UEWM_Safety_Governance_V6.md) | Threat model, RBAC, SOC 2, penetration testing |
-| [Engineering Spec V5.0](docs/en/design/UEWM_Engineering_Spec_V5.md) | Sequence diagrams, component dependencies, deployment artifacts |
-| [Data Strategy V4.0](docs/en/design/UEWM_Data_Strategy_V4.md) | Training data pipeline, quality validation, compliance |
-| [Deployment & Ops V4.0](docs/en/design/UEWM_Deployment_Operations_V4.md) | K8s topology, SLO system, error budget, load testing |
-| [Integration Map V1.0](docs/en/design/UEWM_Integration_Map_V1.md) | External system adapters, LLM management, credentials |
-| [Traceability Matrix V2.0](docs/en/traceability/UEWM_Traceability_Matrix_V2.md) | 112 ACs → design sections → verification methods |
+| Core Document | Path | Description |
+|---------------|------|-------------|
+| **Requirements V6.1** | [`requirements/UEWM_Requirements_V6.1.md`](docs/en/requirements/UEWM_Requirements_V6.1.md) | The unified source of truth for all requirements and ACs |
+| **System Architecture 1.1** | [`design/UEWM_Architecture_deliver_v1.1.md`](docs/en/design/UEWM_Architecture_deliver_v1.1.md) | Core system architecture, Brain Core components, H-JEPA |
+| **Agents Design 1.1** | [`design/UEWM_Agents_Design_deliver_v1.1.md`](docs/en/design/UEWM_Agents_Design_deliver_v1.1.md) | 12 AI Agents, three-ring architecture, ALFA framework |
+| **Self-Evolution 1.1** | [`design/UEWM_Self_Evolution_deliver_v1.1.md`](docs/en/design/UEWM_Self_Evolution_deliver_v1.1.md) | Continuous learning, circuit breakers, Pareto optimization |
+| **EIP Protocol 1.1** | [`design/UEWM_EIP_Protocol_deliver_v1.1.md`](docs/en/design/UEWM_EIP_Protocol_deliver_v1.1.md) | Engineering Intelligence Protocol, RPC/Messaging schemas |
+| **Safety Governance 1.1** | [`design/UEWM_Safety_Governance_deliver_v1.1.md`](docs/en/design/UEWM_Safety_Governance_deliver_v1.1.md) | Security framework, RBAC compliance, SOC 2 roadmap |
+| **Data Strategy 1.1** | [`design/UEWM_Data_Strategy_deliver_v1.1.md`](docs/en/design/UEWM_Data_Strategy_deliver_v1.1.md) | Training pipelines, knowledge transfer, federated learning |
+| **Deployment Ops 1.1** | [`design/UEWM_Deployment_Operations_deliver_v1.1.md`](docs/en/design/UEWM_Deployment_Operations_deliver_v1.1.md) | Cluster topology, observability, error budget policies |
+| **Integration Map 1.1** | [`design/UEWM_Integration_Map_deliver_v1.1.md`](docs/en/design/UEWM_Integration_Map_deliver_v1.1.md) | External tool adapters, system boundaries layer |
+| **Engineering Spec 1.1** | [`design/UEWM_Engineering_Spec_deliver_v1.1.md`](docs/en/design/UEWM_Engineering_Spec_deliver_v1.1.md) | API dependencies, sequence architectures |
+| **Traceability Matrix 1.1** | [`design/UEWM_Traceability_Matrix_deliver_v1.1.md`](docs/en/design/UEWM_Traceability_Matrix_deliver_v1.1.md) | End-to-end design requirement coverage assessment |
+
+> *Note: Historic architecture iterations, coverage reports, and GAP analyses are maintained in the [`docs/en/design/arch_20260324`](docs/en/design/arch_20260324) and [`docs/en/design/arch_20260322`](docs/en/design/arch_20260322) archives.*
 
 ### Contributing
 
@@ -136,20 +118,35 @@ UEWM（通用工程世界模型）是一个 AI 系统，它为整个软件工程
 
 它不只是写代码——它*理解*你的整个工程组织，并能预测每个决策的下游影响。
 
-### 核心特性
+### 核心特性与系统架构
 
-- **🧠 H-JEPA Brain Core** — 8 层隐空间，多时间尺度层级预测
-- **⚡ EBM 决策引擎** — 基于能量的全系统影响评估
-- **🤖 12 个专业 AI Agent** — 三环架构 + ALFA 自动化等级框架 (LOA 1-10)
-- **🔄 自进化** — LoRA 持续学习 + 安全包络 + 断路器 + 帕累托约束
-- **🛡️ 企业级安全** — T1-T5 威胁模型 + RBAC + SOC 2 合规
-- **📡 EIP 协议** — 强类型 gRPC + Kafka 通信协议
-- **🔐 隐私保护知识迁移** — KSL 分级联邦学习 + 差分隐私
-- **📊 TRL 成熟度模型** — 技术就绪度等级 (0-5) 自动驱动系统行为
+关于 UEWM 的详细核心能力与系统架构图纸，请参见对应的独立设计文档：
+- **[H-JEPA 底座与系统核心架构](docs/zh/design/UEWM_Architecture_deliver_v1.1.md)**
+- **[12 大工程 AI 智能体设计](docs/zh/design/UEWM_Agents_Design_deliver_v1.1.md)**
+- **[自进化引擎与安全控制](docs/zh/design/UEWM_Self_Evolution_deliver_v1.1.md)**
+- **[EIP 通信协议与规范](docs/zh/design/UEWM_EIP_Protocol_deliver_v1.1.md)**
+- **[企业级安全治理与合规](docs/zh/design/UEWM_Safety_Governance_deliver_v1.1.md)**
+- **[训练数据策略与联邦分级](docs/zh/design/UEWM_Data_Strategy_deliver_v1.1.md)**
 
 ### 文档
 
-📖 **[完整中文文档 →](docs/zh/)**
+📖 **[完整中文文档目录 →](docs/zh/)** | 📖 **[Full English documentation →](docs/en/)**
+
+| 核心交付文档 | 相对路径 | 文档说明 |
+|--------------|----------|----------|
+| **需求规格 V6.1** | [`requirements/UEWM_Requirements_V6.1.md`](docs/zh/requirements/UEWM_Requirements_V6.1.md) | 全项目需求与验收指标 (AC) 的唯一基线引用源 |
+| **系统架构 1.1** | [`design/UEWM_Architecture_deliver_v1.1.md`](docs/zh/design/UEWM_Architecture_deliver_v1.1.md) | 系统整体架构、Brain Core 组件、H-JEPA 底座 |
+| **智能体设计 1.1** | [`design/UEWM_Agents_Design_deliver_v1.1.md`](docs/zh/design/UEWM_Agents_Design_deliver_v1.1.md) | 12 个工程 AI Agent、三环架构、ALFA 控制框架 |
+| **自进化机制 1.1** | [`design/UEWM_Self_Evolution_deliver_v1.1.md`](docs/zh/design/UEWM_Self_Evolution_deliver_v1.1.md) | 持续学习、安全断路器、帕累托进化优化验证 |
+| **EIP 协议 1.1** | [`design/UEWM_EIP_Protocol_deliver_v1.1.md`](docs/zh/design/UEWM_EIP_Protocol_deliver_v1.1.md) | 各组件通信 RPC 与消息强类型载荷规范 |
+| **安全治理 1.1** | [`design/UEWM_Safety_Governance_deliver_v1.1.md`](docs/zh/design/UEWM_Safety_Governance_deliver_v1.1.md) | 访问控制框架、RBAC 矩阵、SOC 2 安全演练路线 |
+| **数据策略 1.1** | [`design/UEWM_Data_Strategy_deliver_v1.1.md`](docs/zh/design/UEWM_Data_Strategy_deliver_v1.1.md) | 训练流水线、基础模型选型与知识联邦学习策略 |
+| **部署运维 1.1** | [`design/UEWM_Deployment_Operations_deliver_v1.1.md`](docs/zh/design/UEWM_Deployment_Operations_deliver_v1.1.md) | 拓扑图、可观测性规划、SLO 与错误预算响应 |
+| **集成边界 1.1** | [`design/UEWM_Integration_Map_deliver_v1.1.md`](docs/zh/design/UEWM_Integration_Map_deliver_v1.1.md) | 外部工具适配器层、内外置模型调用系统边界 |
+| **工程规格 1.1** | [`design/UEWM_Engineering_Spec_deliver_v1.1.md`](docs/zh/design/UEWM_Engineering_Spec_deliver_v1.1.md) | 组件接口调用序列结构细节与配置依赖表 |
+| **追溯矩阵 1.1** | [`design/UEWM_Traceability_Matrix_deliver_v1.1.md`](docs/zh/design/UEWM_Traceability_Matrix_deliver_v1.1.md) | 需求到具体系统架构环节的 100% 测试覆盖映射 |
+
+> *注：其余各版本的迭代架构合并记录、差异补丁包和覆盖率分析文档，请分别查阅 [`docs/zh/design/arch_20260324`](docs/zh/design/arch_20260324) 及 [`docs/zh/design/arch_20260322`](docs/zh/design/arch_20260322) 存档目录。*
 
 ### 许可证
 
