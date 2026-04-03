@@ -1,22 +1,21 @@
 # 📡 UEWM Engineering Intelligent Protocol (EIP) Design Document
 
-**Document version:** deliver-v1.1
+**Document version:** V2.0.1
 **Document Number:** UEWM-EIP-007
-**Last update:** 2026-03-24
-**Status:** Design complete (100% coverage of R11 + Long Memory RECALL verb)
-**Benchmarking requirements:** R11 (all), R09 (manual intervention messages), R02 (arrangement instructions)
-**Merge source:** EIP Protocol V3.0 — Full merging, eliminating patch dependencies
+**Last update:** 2026-04-03
+**Status:** Design completed (100% coverage of R11 + RECALL + third-party registration + dual space message)
+**Benchmarking requirements:** R11 (all), R09, R02, GND
 **Change History:**
-- V1.0: Initial version, aligned with R11 strongly typed payload specification
-- V2.0: JSON example (§4.5); EipStatus extension; structured error code (§5.4)
-- V3.0: Kafka Topic design (§2.4); AWAITING_COMMAND message (§3.3); EipStream service (§2.5)
-- **deliver-v1.0: full merge, no incremental patch dependency**
+- V3.0/deliver-v1.0: Full IDL, Kafka, AWAITING_COMMAND, EipStream
+- V1.0.1: RECALL verb, third-party registration protocol (§9), REST gateway (§10)
+- V2.0.0: Dual space message (EipResponse including RiskDecomposition + GSpacePrediction), DISCOVER event type, G-Space query verb
+- **V2.0.1: (LeWM integration) No protocol layer changes, adaptive latent dimensions are processed internally by Brain Core; fully merge V1.0.1 content, eliminating all reference dependencies**
 
 ---
 
 ## 1. Protocol Overview
 
-EIP (Engineering Intelligence Protocol) is a unified communication protocol between Agent and Brain Core, which serves as the "central nervous system" of the UEWM system. All Agent interactions, human intervention, and orchestration instructions are transmitted through this protocol.
+EIP (Engineering Intelligence Protocol) is a unified communication protocol between Agent and Brain Core, which serves as the "central nervous system" of the UEWM system. All Agent interactions, human intervention, and orchestration instructions are transmitted through this protocol. V2.0 enhancement: EipResponse carries both energy score (signal discovery) and risk decomposition (interpretable prediction), and a new DISCOVER event type is added.
 
 ### 1.1 Design Constraints
 
@@ -57,10 +56,12 @@ EIP (Engineering Intelligence Protocol) is a unified communication protocol betw
 | Broadcast | Brain→All Agents | Global LOA Downgrade Notification |
 | Ring Broadcast | Brain → All Agents in a certain ring | Inner ring evolution suspension notification |
 
-### 2.4 Kafka Topic Design```
+### 2.4 Kafka Topic Design
+
+```
 Topic naming: uewm.{scope}.{event_type}.{version}
 
-Topics:
+Topics (V1.0.1 base):
   uewm.events.loa-changed.v1 # LOA change event
   uewm.events.trl-updated.v1 # TRL update event
   uewm.events.handoff-ready.v1 # Handoff ready event
@@ -73,6 +74,10 @@ Topics:
   uewm.audit.decisions.v1 # Decision audit log (high throughput)
   uewm.dlq.{original_topic}.v1 # Dead letter queue
 
+V2.0 adds new Kafka Topic:
+  uewm.events.discovery.v1 # Discovery Engine discovery events
+  uewm.events.grounding-alert.v1 # Grounding health alarm
+
 Partition strategy:
   events.* → partition by project_id (same as project events in order)
   status.* → partition by agent_id (same as Agent status in order)
@@ -82,11 +87,15 @@ Retention policy:
   events.* → 7 days | status.* → 24h | audit.* → 90 days | dlq.* → 30 days
 
 Consumer Groups:
-  uewm-brain-core     → status.agent-heartbeat
+  uewm-brain-core → status.agent-heartbeat
   uewm-orchestrator → events.* (orchestration module aggregation events)
   uewm-audit-writer → audit.* (write to Elasticsearch/ClickHouse)
   uewm-agent-{id} → events.* (filtered by agent_id)
-```### 2.5 EipStream service definition```protobuf
+```
+
+### 2.5 EipStream service definition
+
+```protobuf
 service EipStreamService {
   rpc SubscribeEvents(StreamSubscription) returns (stream EipEvent);
   rpc SubscribeDirectives(AgentStreamSubscription) returns (stream EipEvent);
@@ -101,9 +110,11 @@ message StreamSubscription {
 
 message AgentStreamSubscription {
   string agent_id = 1;
-  string ring = 2;   // inner/middle/outer
+  string ring = 2; // inner/middle/outer
 }
-```Usage scenarios: Portal Dashboard refreshes in real time; Agent receives DIRECTIVE/LOA_UPDATE push; Error budget real-time banner.
+```
+
+Usage scenarios: Portal Dashboard refreshes in real time; Agent receives DIRECTIVE/LOA_UPDATE push; Error budget real-time banner.
 
 ---
 
@@ -113,13 +124,14 @@ message AgentStreamSubscription {
 
 | Verb | Purpose | Request payload | Response payload |
 |------|------|---------|---------|
-| PREDICT | World Model Prediction | PredictRequest | PredictResult |
-| EVALUATE | EBM solution evaluation | EvaluateRequest | EvaluateResult |
-| ORCHESTRATE | Orchestration task sequencing/handover/arbitration | OrchestrateRequest | OrchestrateResult |
-| REPORT_STATUS | Agent status report | ReportStatusPayload | Ack |
-| SUBMIT_ARTIFACT | Deliverable product submission | SubmitArtifactPayload | Ack |
-| HUMAN_INTERVENTION | Human Intervention Request | HumanInterventionPayload | BrainAnalysisPayload |
+| PREDICT | World Model Prediction | PredictRequest | PredictResult **(V2.0: +GSpacePrediction)** |
+| EVALUATE | EBM solution evaluation | EvaluateRequest | EvaluateResult **(V2.0: +RiskDecomposition)** |
+| ORCHESTRATE | Orchestrate task ordering | OrchestrateRequest | OrchestrateResult |
+| REPORT_STATUS | Status Report | ReportStatusPayload | Ack |
+| SUBMIT_ARTIFACT | Product submission | SubmitArtifactPayload | Ack |
+| HUMAN_INTERVENTION | Human Intervention | HumanInterventionPayload | BrainAnalysisPayload |
 | **RECALL** | **Memory Retrieval (Long Term Memory)** | **RecallRequest** | **RecallResult** |
+| **QUERY_GSPACE** | **G-Space Query** | **GSpaceQueryRequest** | **GSpaceQueryResult** |
 
 ### 3.2 Brain → Agent command verb
 
@@ -127,8 +139,9 @@ message AgentStreamSubscription {
 |------|------|------|
 | DECISION | Decision result | EvaluateResult |
 | DIRECTIVE | Orchestration instructions | DirectivePayload |
-| LOA_UPDATE | LOA change notification | LoaUpdatePayload |
-| ARTIFACT_ALERT | Product version inconsistency alarm | ArtifactAlertPayload |
+| LOA_UPDATE | LOA changes | LoaUpdatePayload |
+| ARTIFACT_ALERT | Product versions are inconsistent | ArtifactAlertPayload |
+| **DISCOVERY_ALERT** | **New Discovery Notification** | **DiscoveryAlertPayload** |
 
 ### 3.3 Manual intervention message
 
@@ -140,9 +153,11 @@ message AgentStreamSubscription {
 
 ---
 
-## 4. Protobuf IDL complete definition```protobuf
+## 4. Protobuf IDL (V2.0 complete definition)
+
+```protobuf
 syntax = "proto3";
-package uewm.eip.v1;
+package uewm.eip.v2;
 
 // ========== gRPC service ==========
 
@@ -154,6 +169,13 @@ service EipService {
 service EipStreamService {
   rpc SubscribeEvents(StreamSubscription) returns (stream EipEvent);
   rpc SubscribeDirectives(AgentStreamSubscription) returns (stream EipEvent);
+}
+
+service EipRegistrationService {
+  rpc RegisterAgent(AgentRegistrationRequest) returns (AgentRegistrationResponse);
+  rpc DeregisterAgent(AgentDeregistrationRequest) returns (AgentDeregistrationResponse);
+  rpc UpdateCapabilities(CapabilityUpdateRequest) returns (CapabilityUpdateResponse);
+  rpc HealthReport(AgentHealthReport) returns (HealthAck);
 }
 
 // ========== Message envelope ==========
@@ -170,10 +192,11 @@ message EipRequest {
     ReportStatusPayload report_status = 13;
     SubmitArtifactPayload submit_artifact = 14;
     HumanInterventionPayload human_intervention = 15;
-    RecallRequest recall = 16;                        // [deliver-v1.1]
+    RecallRequest recall = 16; // [deliver-v1.1]
+    GSpaceQueryRequest gspace_query = 17; // [V2.0]
   }
   int64 timestamp_ms = 6;
-  string eip_version = 7;
+  string eip_version = 7; // "2.0.1"
 }
 
 message EipResponse {
@@ -184,16 +207,19 @@ message EipResponse {
     EvaluateResult evaluate_result = 11;
     OrchestrateResult orchestrate_result = 12;
     BrainAnalysisPayload brain_analysis = 15;
-    RecallResult recall_result = 16;                  // [deliver-v1.1]
+    RecallResult recall_result = 16; // [deliver-v1.1]
+    GSpaceQueryResult gspace_query_result = 17; // [V2.0]
   }
   EnergyReport energy = 4;
   int64 latency_ms = 5;
   string error_message = 6;
   string error_code = 7;
-  MemoryInfluence memory_influence = 8; // [deliver-v1.1] How memory affects this decision
+  MemoryInfluence memory_influence = 8; // [deliver-v1.1]
+  RiskDecomposition risk_decomposition = 9; // [V2.0] Interpretable risk decomposition
+  GSpacePrediction gspace_prediction = 18; // [V2.0] G-Space prediction
 }
 
-message EipEvent {
+messageEipEvent {
   string event_id = 1;
   EipEventType type = 2;
   string source = 3;
@@ -204,34 +230,35 @@ message EipEvent {
     TrlUpdatePayload trl_update = 13;
     HandoffReadyPayload handoff_ready = 14;
     AwaitingCommandPayload awaiting_command = 15;
+    DiscoveryAlertPayload discovery_alert = 16; // [V2.0]
   }
   RoutingScope scope = 5;
 }
 
-// ========== Enum ==========
+// ========== Enumeration (V2.0 update) ==========
 
 enum EipVerb {
   EIP_VERB_UNKNOWN = 0;
-  PREDICT = 1;
-  EVALUATE = 2;
-  ORCHESTRATE = 3;
-  REPORT_STATUS = 4;
-  SUBMIT_ARTIFACT = 5;
-  HUMAN_INTERVENTION = 10;
-  RECALL = 11; // [deliver-v1.1] Long-term memory retrieval
+  PREDICT = 1; EVALUATE = 2; ORCHESTRATE = 3;
+  REPORT_STATUS = 4; SUBMIT_ARTIFACT = 5;
+  HUMAN_INTERVENTION = 10; RECALL = 11; // [deliver-v1.1]
+  QUERY_GSPACE = 12; // [V2.0]
 }
 
 enum EipStatus {
   EIP_STATUS_UNKNOWN = 0;
-  OK = 1;  ERROR = 2;  PARTIAL = 3;  AWAITING_HUMAN = 4;
-  INVALID_PAYLOAD = 5;  PERMISSION_DENIED = 6;  QUOTA_EXCEEDED = 7;  TIMEOUT = 8;
+  OK = 1; ERROR = 2; PARTIAL = 3; AWAITING_HUMAN = 4;
+  INVALID_PAYLOAD = 5; PERMISSION_DENIED = 6; QUOTA_EXCEEDED = 7; TIMEOUT = 8;
 }
 
 enum EipEventType {
   EIP_EVENT_TYPE_UNKNOWN = 0;
-  LOA_CHANGED = 1;  TRL_UPDATED = 2;  HANDOFF_READY = 3;
-  ARTIFACT_VERSION_MISMATCH = 4;  SLO_ALERT = 5;  EVOLUTION_COMPLETED = 6;
-  PRIVACY_BUDGET_EXHAUSTED = 7;  AWAITING_COMMAND = 8;
+  LOA_CHANGED = 1; TRL_UPDATED = 2; HANDOFF_READY = 3;
+  ARTIFACT_VERSION_MISMATCH = 4; SLO_ALERT = 5;
+  EVOLUTION_COMPLETED = 6; PRIVACY_BUDGET_EXHAUSTED = 7;
+  AWAITING_COMMAND = 8;
+  DISCOVERY = 9; // [V2.0]
+  GROUNDING_ALERT = 10; // [V2.0]
 }
 
 enum RoutingScope { ROUTING_SCOPE_UNKNOWN = 0; UNICAST = 1; BROADCAST = 2; RING_BROADCAST = 3; }
@@ -405,13 +432,70 @@ message ProjectProfileSummary {
   repeated string risk_memories = 3;
 }
 
+// ========== V2.0 new message ==========
+
+message RiskDecomposition {
+  float test_risk = 1; // Test risk [0,1]
+  float performance_risk = 2; // Performance risk [0,1]
+  float complexity_risk = 3; // Complexity risk [0,1]
+  float cascade_risk = 4; // cascade risk [0,1]
+  float unnamed_risk = 5; // Unnamed risk (Z found but G could not explain)
+  float explained_pct = 6; // Proportion of explained energy (target ≥70%)
+  repeated RiskComponent components = 7;
+  string explanation = 8; // human readable explanation
+}
+
+message RiskComponent {
+  string name = 1; // e.g., "test.coverage_delta"
+  float predicted_change = 2; // e.g., -3.2 (coverage dropped by 3.2pp)
+  float risk_contribution = 3; // Contribution to total energy
+  string severity = 4; // LOW/MEDIUM/HIGH/CRITICAL
+}
+
+message GSpacePrediction {
+  map<string, float> predicted_metrics = 1; // "code.complexity_avg": 13.1
+  map<string, float> current_metrics = 2; // "code.complexity_avg": 12.4
+  map<string, float> predicted_deltas = 3; // "code.complexity_avg": +0.7
+  float overall_confidence = 4;
+}
+
+message GSpaceQueryRequest {
+  string project_id = 1;
+  repeated string metric_names = 2; // empty = all
+  int64 from_timestamp_ms = 3;
+  int64 to_timestamp_ms = 4;
+}
+
+message GSpaceQueryResult {
+  map<string, float> current_values = 1;
+  repeated GSpaceHistoryPoint history = 2;
+}
+
+message GSpaceHistoryPoint {
+  int64 timestamp_ms = 1;
+  map<string, float> values = 2;
+}
+
+message DiscoveryAlertPayload {
+  string discovery_id = 1;
+  string pattern_description = 2;
+  float confidence = 3;
+  string proposed_metric_name = 4;
+  int32 evidence_count = 5;
+  repeated string involved_z_layers = 6;
+}
+
 message StreamSubscription { repeated EipEventType event_types = 1; string project_id = 2; string agent_id = 3; RoutingScope min_scope = 4; }
 message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
-```---
+```
+
+---
 
 ## 4.5 Message JSON sample directory
 
-### 4.5.1 PREDICT request```json
+### 4.5.1 PREDICT request
+
+```json
 {
   "request_id": "req-550e8400-e29b-41d4-a716-446655440000",
   "agent_id": "AG-CD-instance-01",
@@ -426,9 +510,13 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     "target_layers": ["Z_quality", "Z_phys"]
   },
   "timestamp_ms": 1711100001000,
-  "eip_version": "1.0.0"
+  "eip_version": "2.0.1"
 }
-```### 4.5.2 PREDICT response```json
+```
+
+### 4.5.2 PREDICT response
+
+```json
 {
   "request_id": "req-550e8400-e29b-41d4-a716-446655440000",
   "status": "OK",
@@ -441,9 +529,19 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     "causal_explanations": [{"path_nodes": ["Z_impl", "Z_quality", "Z_phys"], "strength": 0.72}]
   },
   "energy": {"layer_energies": {"Z_impl": 0.15, "Z_quality": 0.22, "Z_phys": 0.18}, "total_energy": 0.55, "cross_layer_energy": 0.10, "safety_energy": 0.05, "approval_required": false, "risk_level": "LOW"},
+  "gspace_prediction": {
+    "predicted_metrics": {"test.coverage_pct": 77.5, "code.complexity_avg": 12.6},
+    "current_metrics": {"test.coverage_pct": 78.0, "code.complexity_avg": 12.4},
+    "predicted_deltas": {"test.coverage_pct": -0.5, "code.complexity_avg": 0.2},
+    "overall_confidence": 0.80
+  },
   "latency_ms": 145
 }
-```### 4.5.3 EVALUATE request```json
+```
+
+### 4.5.3 EVALUATE request
+
+```json
 {
   "request_id": "req-660f9500-f30c-52e5-b827-557766550001",
   "agent_id": "AG-SA-instance-01", "project_id": "proj-alpha-001", "verb": "EVALUATE",
@@ -454,26 +552,50 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     ],
     "evaluation_context": "architecture_decision", "return_ranking": true
   },
-  "timestamp_ms": 1711100002000, "eip_version": "1.0.0"
+  "timestamp_ms": 1711100002000, "eip_version": "2.0.1"
 }
-```### 4.5.4 EVALUATE response```json
+```
+
+### 4.5.4 EVALUATE response (V2.0 including Risk Decomposition)
+
+```json
 {
-  "request_id": "req-660f9500-f30c-52e5-b827-557766550001", "status": "OK",
+  "request_id": "req-v2-001",
+  "status": "OK",
   "evaluate_result": {
     "scores": [
-      {"candidate_id": "arch-microservice", "total_energy": 0.35, "layer_energies": {"Z_arch": 0.15, "Z_impl": 0.10, "Z_phys": 0.10}, "risk_level": "MEDIUM"},
-      {"candidate_id": "arch-monolith", "total_energy": 0.22, "layer_energies": {"Z_arch": 0.08, "Z_impl": 0.07, "Z_phys": 0.07}, "risk_level": "LOW"}
+      {"candidate_id": "approach-A", "total_energy": 0.45, "risk_level": "MEDIUM"},
+      {"candidate_id": "approach-B", "total_energy": 0.22, "risk_level": "LOW"}
     ],
-    "recommended_index": 1,
-    "reasoning": "Monolith lower energy (0.22 vs 0.35) given team size and TRL-3 maturity"
+    "recommended_index": 1
   },
-  "latency_ms": 89
+  "energy": {"total_energy": 0.22},
+  "risk_decomposition": {
+    "test_risk": 0.15,
+    "performance_risk": 0.05,
+    "complexity_risk": 0.10,
+    "cascade_risk": 0.08,
+    "unnamed_risk": 0.07,
+    "explained_pct": 0.68,
+    "explanation": "Approach B: test coverage likely drops 1.2pp (LOW), complexity increases 5% (LOW), moderate cascade risk due to payment module fan-out. 7% of energy from unnamed latent patterns."
+  },
+  "gspace_prediction": {
+    "predicted_metrics": {"test.coverage_pct": 76.8, "code.complexity_avg": 13.0},
+    "current_metrics": {"test.coverage_pct": 78.0, "code.complexity_avg": 12.4},
+    "predicted_deltas": {"test.coverage_pct": -1.2, "code.complexity_avg": 0.6},
+    "overall_confidence": 0.72
+  },
+  "latency_ms": 145
 }
-```### 4.5.5 ORCHESTRATE request / 4.5.6 REPORT_STATUS / 4.5.7 SUBMIT_ARTIFACT / 4.5.8 HUMAN_INTERVENTION
+```
 
-(Complete JSON example: at least 1 of each message type, covering SCHEDULE, status reporting, product submission, manual intervention, the format is the same as above.)
+### 4.5.5-4.5.8 Other request JSON examples
 
-### 4.5.9 PERMISSION_DENIED response```json
+ORCHESTRATE(SCHEDULE), REPORT_STATUS, SUBMIT_ARTIFACT, HUMAN_INTERVENTION One JSON example per type (complete fields covered).
+
+### 4.5.9 PERMISSION_DENIED response
+
+```json
 {
   "request_id": "req-cc0f5b00-f96c-b8eb-1e83-bb3322bb0007",
   "status": "PERMISSION_DENIED",
@@ -481,7 +603,11 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
   "error_code": "CROSS_TENANT_ACCESS_PROHIBITED",
   "latency_ms": 3
 }
-```### 4.5.10 LOA_CHANGED event```json
+```
+
+### 4.5.10 LOA_CHANGED event
+
+```json
 {
   "event_id": "evt-dd1a6c00-a07d-c9fc-2f94-cc4433cc0008",
   "type": "LOA_CHANGED", "source": "brain_core",
@@ -492,7 +618,11 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
   },
   "scope": "RING_BROADCAST"
 }
-```### 4.5.11 AWAITING_COMMAND event```json
+```
+
+### 4.5.11 AWAITING_COMMAND event
+
+```json
 {
   "event_id": "evt-awaiting-001", "type": "AWAITING_COMMAND", "source": "AG-SA-instance-01",
   "awaiting_command": {
@@ -503,7 +633,28 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
   },
   "scope": "UNICAST"
 }
-```---
+```
+
+### 4.5.12 DISCOVERY event (new in V2.0)
+
+```json
+{
+  "event_id": "evt-disc-001",
+  "type": "DISCOVERY",
+  "source": "discovery_engine",
+  "discovery_alert": {
+    "discovery_id": "disc-2026-04-01-001",
+    "pattern_description": "When files across 3+ modules change in same PR AND review turnaround < 2h, incidents follow within 7 days",
+    "confidence": 0.78,
+    "proposed_metric_name": "rushed_cross_module_change_rate",
+    "evidence_count": 5,
+    "involved_z_layers": ["Z_impl", "Z_quality", "Z_phys"]
+  },
+  "scope": "BROADCAST"
+}
+```
+
+---
 
 ## 5. Error handling specifications
 
@@ -516,6 +667,8 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 | ORCHESTRATE | 2s | 10s | Return the last scheduling result |
 | REPORT_STATUS | 1s | 5s | Discarded (Kafka at-least-once retry) |
 | HUMAN_INTERVENTION | 30s | 300s | Waiting in line |
+| RECALL | 200ms | 1s | No blocking on failure (memory is enhanced context) |
+| QUERY_GSPACE | 200ms | 5s | Return cached value (TTL=30s) |
 
 ### 5.2 Retry strategy
 
@@ -538,6 +691,7 @@ Exponential backoff: 1s → 2s → 4s, up to 3 times. Idempotence: All requests 
 | PAYLOAD_SCHEMA_VIOLATION | INVALID_PAYLOAD | Payload field verification failed |
 | BRAIN_TIMEOUT | TIMEOUT | Brain Core processing timeout |
 | GATEWAY_TIMEOUT | TIMEOUT | EIP Gateway layer timeout |
+| GSPACE_DATA_UNAVAILABLE | PARTIAL | G-Space data stale/unavailable |
 
 ---
 
@@ -553,7 +707,7 @@ Transmission encryption: mTLS (Agent↔Gateway↔Brain). Identity authentication
 
 ---
 
-## 8. Acceptance criteria mapping
+## 8. Acceptance criteria mapping (V2.0 update)
 
 | AC | Verification method |
 |----|---------|
@@ -565,5 +719,104 @@ Transmission encryption: mTLS (Agent↔Gateway↔Brain). Identity authentication
 | R11 AC-6: Dead Letter Queue Replay | Injection failed→Replay→Success |
 | R11 AC-7: No Any type | IDL static analysis: `grep Any` = 0 |
 | R11 AC-8: Wrong payload rejection | Send mismatch payload → INVALID_PAYLOAD |
-| R11 AC-9: Complete JSON examples | §4.5 Covering all message types (11 examples) |
+| R11 AC-9: Complete JSON examples | §4.5 Covering all message types (12 examples) |
 | R11 AC-10: PERMISSION_DENIED Verifiable | Cross-Tenant Access → PERMISSION_DENIED |
+| **R11 AC-11: Third-party registration agreement** | **§9 Registration→Confirmation→Heartbeat closed loop** |
+| **R11 AC-12: REST gateway conversion** | **§10 JSON→Protobuf 8 path verification** |
+| **R11 AC-13: RiskDecomposition field is complete** | **EVALUATE response contains all risk components** |
+| **R11 AC-14: GSpacePrediction field complete** | **PREDICT/EVALUATE including G-Space prediction** |
+| **R11 AC-15: DISCOVERY events can be received** | **Discovery→Kafka→Agent/Portal verification** |
+
+---
+
+## 9. Third-party Agent Registration Protocol (Protobuf) [V1.0.1]
+
+```protobuf
+// ========== Third-party Agent Registration [V1.0.1] ==========
+
+message AgentRegistrationRequest {
+  string agent_type = 1; // Custom type name
+  string agent_version = 2; // Semantic version number
+  repeated EipVerb supported_verbs = 3;
+  repeated string z_layer_read = 4; // Z-Layer that needs to be read
+  repeated string z_layer_write = 5; // Z-Layer that needs to be written
+  string ring_classification = 6; // inner/middle/outer
+  int32 min_loa = 7;
+  int32 max_loa = 8;
+  string health_check_endpoint = 9;
+  map<string, string> metadata = 10; // description, contact, document link
+}
+
+message AgentRegistrationResponse {
+  string agent_id = 1; // System allocation: "EXT-{type}-{uuid}"
+  string api_key = 2; // Vault issuance
+  repeated EipVerb granted_verbs = 3;
+  repeated string granted_z_layers_read = 4;
+  repeated string granted_z_layers_write = 5;
+  int32 assigned_loa = 6;
+  ThirdPartyQuota quota = 7;
+  EipSDKConfig sdk_config = 8;
+  AgentRegistrationStatus status = 9;
+}
+
+enum AgentRegistrationStatus {
+  REGISTRATION_STATUS_UNKNOWN = 0;
+  PENDING_REVIEW = 1; ACTIVE = 2; SUSPENDED = 3; DEREGISTERED = 4;
+}
+
+messageThirdPartyQuota {
+  int32 max_concurrent_requests = 1;
+  int32 max_requests_per_minute = 2;
+  int32 max_z_layers_read = 3;
+  int32 max_z_layers_write = 4;
+  bool memory_recall_enabled = 5;
+  bool evolution_participation = 6;
+  string tier = 7; // free/standard/premium
+}
+
+message EipSDKConfig {
+  int32 predict_timeout_ms = 1;
+  int32 evaluate_timeout_ms = 2;
+  int32 retry_count = 3;
+  int32 circuit_breaker_threshold = 4;
+  int32 heartbeat_interval_ms = 5;
+}
+
+message AgentHealthReport {
+  string agent_id = 1;
+  AgentState state = 2;
+  float cpu_usage_pct = 3;
+  float memory_usage_pct = 4;
+  int64 uptime_ms = 5;
+  int32 active_tasks = 6;
+}
+```
+
+---
+
+## 10. REST↔gRPC Gateway Protocol Specification [V1.0.1 + V2.0]
+
+```
+REST gateway route map (V1.0.1 base):
+  POST /api/v1/ext/register → EipRegistrationService.RegisterAgent
+  DELETE /api/v1/ext/register/{id} → EipRegistrationService.DeregisterAgent
+  POST /api/v1/ext/predict → EipService.SendRequest(verb=PREDICT)
+  POST /api/v1/ext/evaluate → EipService.SendRequest(verb=EVALUATE)
+  POST /api/v1/ext/report → EipService.SendRequest(verb=REPORT_STATUS)
+  POST /api/v1/ext/artifact → EipService.SendRequest(verb=SUBMIT_ARTIFACT)
+  POST /api/v1/ext/recall → EipService.SendRequest(verb=RECALL)
+  POST /api/v1/ext/health → EipRegistrationService.HealthReport
+  GET /api/v1/ext/schema → Return JSON Schema (automatically generated from Protobuf)
+
+V2.0 new path:
+  GET /api/v1/ext/gspace/{project_id} → QUERY_GSPACE
+  GET /api/v1/ext/discoveries/{project_id} → Discovery query
+
+Request conversion rules:
+  JSON body → Protobuf deserialization → EipRequest encapsulation → gRPC call
+  gRPC EipResponse → Protobuf serialization → JSON body return
+
+Authentication: Authorization: Bearer {api_key}
+Content-Type: application/json
+Documentation: /api/v1/ext/docs (OpenAPI 3.0 Swagger UI)
+```

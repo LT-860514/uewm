@@ -1,22 +1,21 @@
 # 📡 UEWM 工程智能协议 (EIP) 设计文档
 
-**文档版本：** deliver-v1.1  
+**文档版本：** V2.0.1  
 **文档编号：** UEWM-EIP-007  
-**最后更新：** 2026-03-24  
-**状态：** 设计完成（100% 覆盖 R11 + Long Memory RECALL 动词）  
-**对标需求：** R11 (全部), R09 (人工干预消息), R02 (编排指令)  
-**合并来源：** EIP Protocol V3.0 — 全量合并，消除补丁依赖  
+**最后更新：** 2026-04-03  
+**状态：** 设计完成（100% 覆盖 R11 + RECALL + 第三方注册 + 双空间消息）  
+**对标需求：** R11 (全部), R09, R02, GND  
 **变更历史：**
-- V1.0: 初始版本，对齐 R11 强类型载荷规范
-- V2.0: JSON 示例(§4.5)；EipStatus 扩展；结构化错误码(§5.4)
-- V3.0: Kafka Topic 设计(§2.4)；AWAITING_COMMAND 消息(§3.3)；EipStream 服务(§2.5)
-- **deliver-v1.0: 全量合并，无增量补丁依赖**
+- V3.0/deliver-v1.0: 完整 IDL, Kafka, AWAITING_COMMAND, EipStream
+- V1.0.1: RECALL 动词, 第三方注册协议 (§9), REST 网关 (§10)
+- V2.0.0: 双空间消息 (EipResponse 含 RiskDecomposition + GSpacePrediction), DISCOVER 事件类型, G-Space 查询动词
+- **V2.0.1: (LeWM 集成) 无协议层变更, 自适应隐维度由 Brain Core 内部处理; 全量合并 V1.0.1 内容，消除所有引用依赖**
 
 ---
 
 ## 1. 协议概述
 
-EIP (Engineering Intelligence Protocol) 是 Agent 与 Brain Core 之间的统一通信协议，作为 UEWM 系统的"中枢神经"。所有 Agent 交互、人工干预、编排指令均通过此协议传输。
+EIP (Engineering Intelligence Protocol) 是 Agent 与 Brain Core 之间的统一通信协议，作为 UEWM 系统的"中枢神经"。所有 Agent 交互、人工干预、编排指令均通过此协议传输。V2.0 增强: EipResponse 同时携带 energy score (发现信号) 和 risk decomposition (可解释预测), 新增 DISCOVER 事件类型。
 
 ### 1.1 设计约束
 
@@ -62,7 +61,7 @@ EIP (Engineering Intelligence Protocol) 是 Agent 与 Brain Core 之间的统一
 ```
 Topic 命名: uewm.{scope}.{event_type}.{version}
 
-Topics:
+Topics (V1.0.1 基础):
   uewm.events.loa-changed.v1          # LOA 变更事件
   uewm.events.trl-updated.v1          # TRL 更新事件
   uewm.events.handoff-ready.v1        # 交接就绪事件
@@ -74,6 +73,10 @@ Topics:
   uewm.status.agent-heartbeat.v1      # Agent 状态上报 (高吞吐)
   uewm.audit.decisions.v1             # 决策审计日志 (高吞吐)
   uewm.dlq.{original_topic}.v1       # 死信队列
+
+V2.0 新增 Kafka Topic:
+  uewm.events.discovery.v1             # Discovery Engine 发现事件
+  uewm.events.grounding-alert.v1       # 接地健康度告警
 
 分区策略:
   events.*    → partition by project_id (同项目事件有序)
@@ -121,13 +124,14 @@ message AgentStreamSubscription {
 
 | 动词 | 用途 | 请求载荷 | 响应载荷 |
 |------|------|---------|---------|
-| PREDICT | 世界模型预测 | PredictRequest | PredictResult |
-| EVALUATE | EBM 方案评估 | EvaluateRequest | EvaluateResult |
-| ORCHESTRATE | 编排任务排序/交接/仲裁 | OrchestrateRequest | OrchestrateResult |
-| REPORT_STATUS | Agent 状态上报 | ReportStatusPayload | Ack |
-| SUBMIT_ARTIFACT | 交付产物提交 | SubmitArtifactPayload | Ack |
-| HUMAN_INTERVENTION | 人工干预请求 | HumanInterventionPayload | BrainAnalysisPayload |
+| PREDICT | 世界模型预测 | PredictRequest | PredictResult **(V2.0: +GSpacePrediction)** |
+| EVALUATE | EBM 方案评估 | EvaluateRequest | EvaluateResult **(V2.0: +RiskDecomposition)** |
+| ORCHESTRATE | 编排任务排序 | OrchestrateRequest | OrchestrateResult |
+| REPORT_STATUS | 状态上报 | ReportStatusPayload | Ack |
+| SUBMIT_ARTIFACT | 产物提交 | SubmitArtifactPayload | Ack |
+| HUMAN_INTERVENTION | 人工干预 | HumanInterventionPayload | BrainAnalysisPayload |
 | **RECALL** | **记忆检索 (长期记忆)** | **RecallRequest** | **RecallResult** |
+| **QUERY_GSPACE** | **G-Space 查询** | **GSpaceQueryRequest** | **GSpaceQueryResult** |
 
 ### 3.2 Brain → Agent 指令动词
 
@@ -135,8 +139,9 @@ message AgentStreamSubscription {
 |------|------|------|
 | DECISION | 决策结果 | EvaluateResult |
 | DIRECTIVE | 编排指令 | DirectivePayload |
-| LOA_UPDATE | LOA 变更通知 | LoaUpdatePayload |
-| ARTIFACT_ALERT | 产物版本不一致告警 | ArtifactAlertPayload |
+| LOA_UPDATE | LOA 变更 | LoaUpdatePayload |
+| ARTIFACT_ALERT | 产物版本不一致 | ArtifactAlertPayload |
+| **DISCOVERY_ALERT** | **新发现通知** | **DiscoveryAlertPayload** |
 
 ### 3.3 人工干预消息
 
@@ -148,11 +153,11 @@ message AgentStreamSubscription {
 
 ---
 
-## 4. Protobuf IDL 完整定义
+## 4. Protobuf IDL (V2.0 完整定义)
 
 ```protobuf
 syntax = "proto3";
-package uewm.eip.v1;
+package uewm.eip.v2;
 
 // ========== gRPC 服务 ==========
 
@@ -164,6 +169,13 @@ service EipService {
 service EipStreamService {
   rpc SubscribeEvents(StreamSubscription) returns (stream EipEvent);
   rpc SubscribeDirectives(AgentStreamSubscription) returns (stream EipEvent);
+}
+
+service EipRegistrationService {
+  rpc RegisterAgent(AgentRegistrationRequest) returns (AgentRegistrationResponse);
+  rpc DeregisterAgent(AgentDeregistrationRequest) returns (AgentDeregistrationResponse);
+  rpc UpdateCapabilities(CapabilityUpdateRequest) returns (CapabilityUpdateResponse);
+  rpc HealthReport(AgentHealthReport) returns (HealthAck);
 }
 
 // ========== 消息信封 ==========
@@ -180,10 +192,11 @@ message EipRequest {
     ReportStatusPayload report_status = 13;
     SubmitArtifactPayload submit_artifact = 14;
     HumanInterventionPayload human_intervention = 15;
-    RecallRequest recall = 16;                        // [deliver-v1.1]
+    RecallRequest recall = 16;              // [deliver-v1.1]
+    GSpaceQueryRequest gspace_query = 17;   // [V2.0]
   }
   int64 timestamp_ms = 6;
-  string eip_version = 7;
+  string eip_version = 7;  // "2.0.1"
 }
 
 message EipResponse {
@@ -195,12 +208,15 @@ message EipResponse {
     OrchestrateResult orchestrate_result = 12;
     BrainAnalysisPayload brain_analysis = 15;
     RecallResult recall_result = 16;                  // [deliver-v1.1]
+    GSpaceQueryResult gspace_query_result = 17;       // [V2.0]
   }
   EnergyReport energy = 4;
   int64 latency_ms = 5;
   string error_message = 6;
   string error_code = 7;
-  MemoryInfluence memory_influence = 8;               // [deliver-v1.1] 记忆如何影响了此决策
+  MemoryInfluence memory_influence = 8;               // [deliver-v1.1]
+  RiskDecomposition risk_decomposition = 9;           // [V2.0] 可解释风险分解
+  GSpacePrediction gspace_prediction = 18;            // [V2.0] G-Space 预测
 }
 
 message EipEvent {
@@ -214,21 +230,19 @@ message EipEvent {
     TrlUpdatePayload trl_update = 13;
     HandoffReadyPayload handoff_ready = 14;
     AwaitingCommandPayload awaiting_command = 15;
+    DiscoveryAlertPayload discovery_alert = 16;       // [V2.0]
   }
   RoutingScope scope = 5;
 }
 
-// ========== 枚举 ==========
+// ========== 枚举 (V2.0 更新) ==========
 
 enum EipVerb {
   EIP_VERB_UNKNOWN = 0;
-  PREDICT = 1;
-  EVALUATE = 2;
-  ORCHESTRATE = 3;
-  REPORT_STATUS = 4;
-  SUBMIT_ARTIFACT = 5;
-  HUMAN_INTERVENTION = 10;
-  RECALL = 11;                   // [deliver-v1.1] 长期记忆检索
+  PREDICT = 1; EVALUATE = 2; ORCHESTRATE = 3;
+  REPORT_STATUS = 4; SUBMIT_ARTIFACT = 5;
+  HUMAN_INTERVENTION = 10; RECALL = 11;   // [deliver-v1.1]
+  QUERY_GSPACE = 12;                       // [V2.0]
 }
 
 enum EipStatus {
@@ -240,8 +254,11 @@ enum EipStatus {
 enum EipEventType {
   EIP_EVENT_TYPE_UNKNOWN = 0;
   LOA_CHANGED = 1;  TRL_UPDATED = 2;  HANDOFF_READY = 3;
-  ARTIFACT_VERSION_MISMATCH = 4;  SLO_ALERT = 5;  EVOLUTION_COMPLETED = 6;
-  PRIVACY_BUDGET_EXHAUSTED = 7;  AWAITING_COMMAND = 8;
+  ARTIFACT_VERSION_MISMATCH = 4;  SLO_ALERT = 5;
+  EVOLUTION_COMPLETED = 6;  PRIVACY_BUDGET_EXHAUSTED = 7;
+  AWAITING_COMMAND = 8;
+  DISCOVERY = 9;          // [V2.0]
+  GROUNDING_ALERT = 10;   // [V2.0]
 }
 
 enum RoutingScope { ROUTING_SCOPE_UNKNOWN = 0; UNICAST = 1; BROADCAST = 2; RING_BROADCAST = 3; }
@@ -415,6 +432,59 @@ message ProjectProfileSummary {
   repeated string risk_memories = 3;
 }
 
+// ========== V2.0 新增消息 ==========
+
+message RiskDecomposition {
+  float test_risk = 1;          // 测试风险 [0,1]
+  float performance_risk = 2;   // 性能风险 [0,1]
+  float complexity_risk = 3;    // 复杂度风险 [0,1]
+  float cascade_risk = 4;       // 级联风险 [0,1]
+  float unnamed_risk = 5;       // 未命名风险 (Z 发现但 G 无法解释)
+  float explained_pct = 6;      // 已解释能量占比 (目标 ≥70%)
+  repeated RiskComponent components = 7;
+  string explanation = 8;       // 人类可读解释
+}
+
+message RiskComponent {
+  string name = 1;              // e.g., "test.coverage_delta"
+  float predicted_change = 2;   // e.g., -3.2 (覆盖率下降 3.2pp)
+  float risk_contribution = 3;  // 对总能量的贡献
+  string severity = 4;          // LOW/MEDIUM/HIGH/CRITICAL
+}
+
+message GSpacePrediction {
+  map<string, float> predicted_metrics = 1;  // "code.complexity_avg": 13.1
+  map<string, float> current_metrics = 2;    // "code.complexity_avg": 12.4
+  map<string, float> predicted_deltas = 3;   // "code.complexity_avg": +0.7
+  float overall_confidence = 4;
+}
+
+message GSpaceQueryRequest {
+  string project_id = 1;
+  repeated string metric_names = 2;   // 空 = 全部
+  int64 from_timestamp_ms = 3;
+  int64 to_timestamp_ms = 4;
+}
+
+message GSpaceQueryResult {
+  map<string, float> current_values = 1;
+  repeated GSpaceHistoryPoint history = 2;
+}
+
+message GSpaceHistoryPoint {
+  int64 timestamp_ms = 1;
+  map<string, float> values = 2;
+}
+
+message DiscoveryAlertPayload {
+  string discovery_id = 1;
+  string pattern_description = 2;
+  float confidence = 3;
+  string proposed_metric_name = 4;
+  int32 evidence_count = 5;
+  repeated string involved_z_layers = 6;
+}
+
 message StreamSubscription { repeated EipEventType event_types = 1; string project_id = 2; string agent_id = 3; RoutingScope min_scope = 4; }
 message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 ```
@@ -440,7 +510,7 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     "target_layers": ["Z_quality", "Z_phys"]
   },
   "timestamp_ms": 1711100001000,
-  "eip_version": "1.0.0"
+  "eip_version": "2.0.1"
 }
 ```
 
@@ -459,6 +529,12 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     "causal_explanations": [{"path_nodes": ["Z_impl", "Z_quality", "Z_phys"], "strength": 0.72}]
   },
   "energy": {"layer_energies": {"Z_impl": 0.15, "Z_quality": 0.22, "Z_phys": 0.18}, "total_energy": 0.55, "cross_layer_energy": 0.10, "safety_energy": 0.05, "approval_required": false, "risk_level": "LOW"},
+  "gspace_prediction": {
+    "predicted_metrics": {"test.coverage_pct": 77.5, "code.complexity_avg": 12.6},
+    "current_metrics": {"test.coverage_pct": 78.0, "code.complexity_avg": 12.4},
+    "predicted_deltas": {"test.coverage_pct": -0.5, "code.complexity_avg": 0.2},
+    "overall_confidence": 0.80
+  },
   "latency_ms": 145
 }
 ```
@@ -476,30 +552,46 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
     ],
     "evaluation_context": "architecture_decision", "return_ranking": true
   },
-  "timestamp_ms": 1711100002000, "eip_version": "1.0.0"
+  "timestamp_ms": 1711100002000, "eip_version": "2.0.1"
 }
 ```
 
-### 4.5.4 EVALUATE 响应
+### 4.5.4 EVALUATE 响应 (V2.0 含 Risk Decomposition)
 
 ```json
 {
-  "request_id": "req-660f9500-f30c-52e5-b827-557766550001", "status": "OK",
+  "request_id": "req-v2-001",
+  "status": "OK",
   "evaluate_result": {
     "scores": [
-      {"candidate_id": "arch-microservice", "total_energy": 0.35, "layer_energies": {"Z_arch": 0.15, "Z_impl": 0.10, "Z_phys": 0.10}, "risk_level": "MEDIUM"},
-      {"candidate_id": "arch-monolith", "total_energy": 0.22, "layer_energies": {"Z_arch": 0.08, "Z_impl": 0.07, "Z_phys": 0.07}, "risk_level": "LOW"}
+      {"candidate_id": "approach-A", "total_energy": 0.45, "risk_level": "MEDIUM"},
+      {"candidate_id": "approach-B", "total_energy": 0.22, "risk_level": "LOW"}
     ],
-    "recommended_index": 1,
-    "reasoning": "Monolith lower energy (0.22 vs 0.35) given team size and TRL-3 maturity"
+    "recommended_index": 1
   },
-  "latency_ms": 89
+  "energy": {"total_energy": 0.22},
+  "risk_decomposition": {
+    "test_risk": 0.15,
+    "performance_risk": 0.05,
+    "complexity_risk": 0.10,
+    "cascade_risk": 0.08,
+    "unnamed_risk": 0.07,
+    "explained_pct": 0.68,
+    "explanation": "Approach B: test coverage likely drops 1.2pp (LOW), complexity increases 5% (LOW), moderate cascade risk due to payment module fan-out. 7% of energy from unnamed latent patterns."
+  },
+  "gspace_prediction": {
+    "predicted_metrics": {"test.coverage_pct": 76.8, "code.complexity_avg": 13.0},
+    "current_metrics": {"test.coverage_pct": 78.0, "code.complexity_avg": 12.4},
+    "predicted_deltas": {"test.coverage_pct": -1.2, "code.complexity_avg": 0.6},
+    "overall_confidence": 0.72
+  },
+  "latency_ms": 145
 }
 ```
 
-### 4.5.5 ORCHESTRATE 请求 / 4.5.6 REPORT_STATUS / 4.5.7 SUBMIT_ARTIFACT / 4.5.8 HUMAN_INTERVENTION
+### 4.5.5-4.5.8 其他请求 JSON 示例
 
-(完整 JSON 示例: 每个消息类型至少 1 个，涵盖 SCHEDULE, 状态上报, 产物提交, 人工干预，格式同上。)
+ORCHESTRATE(SCHEDULE)、REPORT_STATUS、SUBMIT_ARTIFACT、HUMAN_INTERVENTION 每类型一个 JSON 示例 (覆盖完整字段)。
 
 ### 4.5.9 PERMISSION_DENIED 响应
 
@@ -543,6 +635,25 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 }
 ```
 
+### 4.5.12 DISCOVERY 事件 (V2.0 新增)
+
+```json
+{
+  "event_id": "evt-disc-001",
+  "type": "DISCOVERY",
+  "source": "discovery_engine",
+  "discovery_alert": {
+    "discovery_id": "disc-2026-04-01-001",
+    "pattern_description": "When files across 3+ modules change in same PR AND review turnaround < 2h, incidents follow within 7 days",
+    "confidence": 0.78,
+    "proposed_metric_name": "rushed_cross_module_change_rate",
+    "evidence_count": 5,
+    "involved_z_layers": ["Z_impl", "Z_quality", "Z_phys"]
+  },
+  "scope": "BROADCAST"
+}
+```
+
 ---
 
 ## 5. 错误处理规范
@@ -556,6 +667,8 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 | ORCHESTRATE | 2s | 10s | 返回上次调度结果 |
 | REPORT_STATUS | 1s | 5s | 丢弃 (Kafka at-least-once 重试) |
 | HUMAN_INTERVENTION | 30s | 300s | 排队等待 |
+| RECALL | 200ms | 1s | 失败不阻塞 (记忆为增强型上下文) |
+| QUERY_GSPACE | 200ms | 5s | 返回缓存值 (TTL=30s) |
 
 ### 5.2 重试策略
 
@@ -578,6 +691,7 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 | PAYLOAD_SCHEMA_VIOLATION | INVALID_PAYLOAD | 载荷字段校验失败 |
 | BRAIN_TIMEOUT | TIMEOUT | Brain Core 处理超时 |
 | GATEWAY_TIMEOUT | TIMEOUT | EIP Gateway 层超时 |
+| GSPACE_DATA_UNAVAILABLE | PARTIAL | G-Space 数据 stale/不可用 |
 
 ---
 
@@ -593,7 +707,7 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 
 ---
 
-## 8. 验收标准映射
+## 8. 验收标准映射 (V2.0 更新)
 
 | AC | 验证方法 |
 |----|---------|
@@ -605,5 +719,104 @@ message AgentStreamSubscription { string agent_id = 1; string ring = 2; }
 | R11 AC-6: 死信队列重放 | 注入失败→重放→成功 |
 | R11 AC-7: 无Any类型 | IDL 静态分析: `grep Any` = 0 |
 | R11 AC-8: 错误载荷拒绝 | 发送不匹配载荷→INVALID_PAYLOAD |
-| R11 AC-9: JSON示例完备 | §4.5 覆盖全部消息类型(11个示例) |
+| R11 AC-9: JSON示例完备 | §4.5 覆盖全部消息类型(12个示例) |
 | R11 AC-10: PERMISSION_DENIED可验证 | 跨 Tenant 访问→PERMISSION_DENIED |
+| **R11 AC-11: 第三方注册协议** | **§9 注册→确认→心跳闭环** |
+| **R11 AC-12: REST 网关转换** | **§10 JSON→Protobuf 8 路径验证** |
+| **R11 AC-13: RiskDecomposition 字段完整** | **EVALUATE 响应含全部风险组件** |
+| **R11 AC-14: GSpacePrediction 字段完整** | **PREDICT/EVALUATE 含 G-Space 预测** |
+| **R11 AC-15: DISCOVERY 事件可接收** | **Discovery→Kafka→Agent/Portal 验证** |
+
+---
+
+## 9. 第三方 Agent 注册协议 (Protobuf) [V1.0.1]
+
+```protobuf
+// ========== Third-party Agent Registration [V1.0.1] ==========
+
+message AgentRegistrationRequest {
+  string agent_type = 1;              // 自定义类型名
+  string agent_version = 2;           // 语义版本号
+  repeated EipVerb supported_verbs = 3;
+  repeated string z_layer_read = 4;   // 需要读的 Z-Layer
+  repeated string z_layer_write = 5;  // 需要写的 Z-Layer
+  string ring_classification = 6;     // inner/middle/outer
+  int32 min_loa = 7;
+  int32 max_loa = 8;
+  string health_check_endpoint = 9;
+  map<string, string> metadata = 10;  // 描述, 联系人, 文档链接
+}
+
+message AgentRegistrationResponse {
+  string agent_id = 1;                // 系统分配: "EXT-{type}-{uuid}"
+  string api_key = 2;                 // Vault 签发
+  repeated EipVerb granted_verbs = 3;
+  repeated string granted_z_layers_read = 4;
+  repeated string granted_z_layers_write = 5;
+  int32 assigned_loa = 6;
+  ThirdPartyQuota quota = 7;
+  EipSDKConfig sdk_config = 8;
+  AgentRegistrationStatus status = 9;
+}
+
+enum AgentRegistrationStatus {
+  REGISTRATION_STATUS_UNKNOWN = 0;
+  PENDING_REVIEW = 1;  ACTIVE = 2;  SUSPENDED = 3;  DEREGISTERED = 4;
+}
+
+message ThirdPartyQuota {
+  int32 max_concurrent_requests = 1;
+  int32 max_requests_per_minute = 2;
+  int32 max_z_layers_read = 3;
+  int32 max_z_layers_write = 4;
+  bool memory_recall_enabled = 5;
+  bool evolution_participation = 6;
+  string tier = 7;                    // free/standard/premium
+}
+
+message EipSDKConfig {
+  int32 predict_timeout_ms = 1;
+  int32 evaluate_timeout_ms = 2;
+  int32 retry_count = 3;
+  int32 circuit_breaker_threshold = 4;
+  int32 heartbeat_interval_ms = 5;
+}
+
+message AgentHealthReport {
+  string agent_id = 1;
+  AgentState state = 2;
+  float cpu_usage_pct = 3;
+  float memory_usage_pct = 4;
+  int64 uptime_ms = 5;
+  int32 active_tasks = 6;
+}
+```
+
+---
+
+## 10. REST↔gRPC 网关协议规范 [V1.0.1 + V2.0]
+
+```
+REST 网关路由映射 (V1.0.1 基础):
+  POST /api/v1/ext/register        → EipRegistrationService.RegisterAgent
+  DELETE /api/v1/ext/register/{id} → EipRegistrationService.DeregisterAgent
+  POST /api/v1/ext/predict         → EipService.SendRequest(verb=PREDICT)
+  POST /api/v1/ext/evaluate        → EipService.SendRequest(verb=EVALUATE)
+  POST /api/v1/ext/report          → EipService.SendRequest(verb=REPORT_STATUS)
+  POST /api/v1/ext/artifact        → EipService.SendRequest(verb=SUBMIT_ARTIFACT)
+  POST /api/v1/ext/recall          → EipService.SendRequest(verb=RECALL)
+  POST /api/v1/ext/health          → EipRegistrationService.HealthReport
+  GET  /api/v1/ext/schema          → 返回 JSON Schema (从 Protobuf 自动生成)
+
+V2.0 新增路径:
+  GET  /api/v1/ext/gspace/{project_id}      → QUERY_GSPACE
+  GET  /api/v1/ext/discoveries/{project_id} → Discovery 查询
+
+请求转换规则:
+  JSON body → Protobuf 反序列化 → EipRequest 封装 → gRPC 调用
+  gRPC EipResponse → Protobuf 序列化 → JSON body 返回
+
+认证: Authorization: Bearer {api_key}
+Content-Type: application/json
+文档: /api/v1/ext/docs (OpenAPI 3.0 Swagger UI)
+```

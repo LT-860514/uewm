@@ -1,11 +1,15 @@
 # 🔌 UEWM 外部系统集成边界设计文档
 
-**文档版本：** deliver-v1.0  
+**文档版本：** V2.0.1  
 **文档编号：** UEWM-INTEG-010  
 **创建日期：** 2026-03-22  
-**最后更新：** 2026-03-23  
-**状态：** 设计完成  
-**合并来源：** Integration Map V1.0 — 无补丁，原版即完整  
+**最后更新：** 2026-04-03  
+**状态：** 设计完成（R13 全部 + G-Space 外部数据源集成 + 第三方 Agent 集成边界）  
+**变更历史：**
+- deliver-v1.0: 适配器架构, LLM 管理, 凭证, 故障降级
+- V1.0.1: 第三方 Agent 集成边界 (§6)
+- V2.0.0: G-Space 外部数据源集成 (Prometheus/GitHub/CI/SonarQube), 数据源故障降级
+- **V2.0.1: (LeWM 集成) 无集成层变更; Z-Space 维度变化对外部系统透明; 全量合并 V1.0.1 内容，消除所有引用依赖**
 **对标需求：** R13 (全部), R02.10 (执行引擎外部依赖), R05 (LLM 成本管理)
 
 ---
@@ -30,6 +34,15 @@ UEWM 职责 (编排决策层):
   ├── 所有外部调用通过 Adapter Layer 隔离
   ├── Agent 对外部工具的操作权限由 RBAC + Agent LOA 共同约束
   └── 外部工具凭证通过 Vault 管理，不硬编码
+
+V2.0 系统边界扩展:
+  G-Space 数据源 (V2.0 新增外部依赖):
+    ├── Prometheus → ops.* 指标 (必选)
+    ├── GitHub/GitLab API → code.*, process.* 指标 (必选)
+    ├── CI System API → test.* 指标 (必选)
+    ├── SonarQube/tree-sitter → code.complexity, coupling (可选, 有降级)
+    ├── Jira/Linear → process.velocity, issue.* (可选)
+    └── 所有数据源通过 GSpaceCollector 适配器隔离
 ```
 
 ---
@@ -62,7 +75,7 @@ Agent ─→ Adapter Interface (抽象) ─→ Adapter Impl (具体工具)
 
 ---
 
-## 3. LLM 外部依赖管理 [对标 R02.10 + R05 Gap-5]
+## 3. LLM 外部依赖管理
 
 ### 3.1 LLM 适配器架构
 
@@ -144,18 +157,21 @@ class LLMCostTracker:
 
 ---
 
-## 4. 凭证管理 [对标 R13 AC-4]
+## 4. 凭证管理
 
 | 凭证类型 | 管理方式 | 轮换 | 适用 Agent |
 |---------|---------|------|-----------|
 | Git API Token | Vault Dynamic Secrets | 每 24h | AG-CD |
 | CI API Token | Vault Dynamic Secrets | 每 24h | AG-CT |
 | K8s ServiceAccount | K8s RBAC + bound token | 自动 | AG-DO, AG-ST |
-| Prometheus API Key | Vault KV v2 | 每 90 天 | AG-MA |
+| Prometheus API Key | Vault KV v2 | 每 90 天 | AG-MA, **G-Space Engine** |
 | LLM API Key | Vault KV v2 (加密 at-rest) | 每 90 天 | AG-CD, AG-CT, AG-ST |
 | Jira/Linear API Token | Vault KV v2 | 每 90 天 | AG-FD |
 | SAST Tool License | Vault KV v2 | 按许可证周期 | AG-AU |
 | BI 数据库凭证 | Vault Dynamic Secrets | 每 1h (短期租约) | AG-BI |
+| **SonarQube Token** | **Vault KV v2** | **每 90 天** | **G-Space Engine (code.complexity)** |
+
+(注: GitHub API Token 和 CI Token 已在上表定义, G-Space Engine 复用)
 
 ---
 
@@ -171,9 +187,79 @@ class LLMCostTracker:
 | AG-AU | SAST 工具不可用 | LOA → ≤4 | 标记"未审计"并阻塞交接门 |
 | AG-BI | 数据仓库不可用 | LOA → ≤4 | 使用缓存聚合数据 |
 
+### 5.2 G-Space 数据源故障降级 (V2.0 新增)
+
+| 数据源 | 依赖类型 | 故障影响 | 降级行为 |
+|--------|---------|---------|---------|
+| Prometheus | 必选 (ops.*) | ops.* 指标缺失 | 使用 K8s metrics-server 基础指标 (cpu, mem), 标记 ops.* 为 stale |
+| GitHub API | 必选 (code.*, process.*) | 代码/过程指标缺失 | 使用本地 git 命令计算 code.* 子集, process.* 标记 stale |
+| CI API | 必选 (test.*) | 测试指标缺失 | 使用本地测试运行结果 (如有), 否则 test.* 标记 stale |
+| SonarQube | 可选 | complexity 精度下降 | tree-sitter 本地计算复杂度 (降级但可用) |
+| Jira/Linear | 可选 | process.velocity 缺失 | process.velocity 标记 N/A, 不影响核心预测 |
+
+```
+G-Space 故障影响 Brain Core:
+  ├── stale 指标不参与一致性损失计算 (防止训练偏差)
+  ├── stale 指标在 RiskDecomposition 中标记 "data stale"
+  ├── 全部 G-Space 不可用 → Brain Core 降级为纯 Z-Space 模式
+  │   (V1.0.1 行为, 无 G-Space 锚定, energy-only 评估)
+  └── G-Space 恢复后自动恢复双空间模式
+```
+
 ---
 
-## 6. 验收标准映射
+## 6. 第三方 Agent 集成边界
+
+### 6.1 第三方 Agent 外部依赖
+
+第三方 Agent 可携带自定义外部依赖 (非 UEWM 管理的工具)。
+
+```
+第三方 Agent 外部依赖管理:
+
+  UEWM 管理的依赖 (通过 UEWM 适配器):
+    第三方 Agent 不直接访问 UEWM 内部工具 (Git/CI/K8s/Prometheus)
+    如需使用, 通过对应内置 Agent 间接协作
+    
+  第三方自带依赖 (Agent 自行管理):
+    第三方 Agent 可连接自有工具 (自建 API, 数据库, SaaS 服务等)
+    UEWM 不管理这些依赖的凭证/健康/降级
+    第三方 Agent 自行负责降级行为
+    
+  凭证隔离:
+    第三方 Agent 的 Vault namespace: vault/uewm-ext/{agent_id}/
+    与内置 Agent 的 Vault namespace 完全隔离
+    第三方 Agent 不可访问内置 Agent 的凭证
+
+  网络隔离:
+    K8s namespace: uewm-ext-agents (独立)
+    NetworkPolicy: 仅允许访问 EIP Gateway + 自声明的外部 IP
+    不可直接访问 uewm-data / uewm-system namespace
+```
+
+### 6.2 第三方 Agent 降级联动
+
+| 场景 | 第三方 Agent 行为 | UEWM 系统行为 |
+|------|------------------|--------------| 
+| Brain Core 不可用 | 自行处理 (SDK 提供降级建议) | 同内置 Agent |
+| 第三方 Agent 健康检查失败 | — | 编排模块标记 SUSPENDED, 不发送 DIRECTIVE |
+| 第三方 Agent 超配额 | 请求被限流 (429) | 审计记录, 不影响其他 Agent |
+| 第三方 Agent 上报异常数据 | — | VectorQualityValidator 拦截, 不写入 Z-Buffer |
+
+### 6.3 第三方 Agent G-Space 访问 (V2.0 新增)
+
+```
+第三方 Agent 可通过 QUERY_GSPACE 动词或 REST 网关查询 G-Space:
+  ├── 仅读权限 (不可写入 G-Space)
+  ├── 仅授权项目 (RBAC 控制)
+  ├── 不可访问 Discovery 数据 (内部模式不暴露)
+  ├── 限流: 10 查询/min (free), 50 查询/min (standard), 200 查询/min (premium)
+  └── 返回格式: 当前值 + 7天历史趋势
+```
+
+---
+
+## 7. 验收标准映射
 
 | AC | 验证方法 |
 |----|---------|
@@ -181,3 +267,10 @@ class LLMCostTracker:
 | R13 AC-2: 工具切换演示 | GitHub→GitLab 适配器热切换, AG-CD 功能不变 |
 | R13 AC-3: 外部故障降级正确触发 | 注入 Git 不可用 → AG-CD LOA ≤4 验证 |
 | R13 AC-4: 凭证通过 Vault 管理 | Vault 审计日志验证 + 无硬编码扫描 |
+| **R13 AC-5: 第三方 Agent 凭证隔离** | **Vault namespace 隔离验证** |
+| **R13 AC-6: 第三方 Agent 网络隔离** | **NetworkPolicy 验证: 无法访问 uewm-data** |
+| **R13 AC-7: 第三方异常数据拦截** | **注入异常向量 → VQV 拦截** |
+| **R13 AC-8: G-Space Prometheus 采集闭环** | **Prometheus → ops.* → G-Space 存储验证** |
+| **R13 AC-9: G-Space GitHub API 采集闭环** | **GitHub → code.*/process.* 存储验证** |
+| **R13 AC-10: G-Space 数据源故障降级** | **Kill Prometheus → ops.* stale + 降级验证** |
+| **R13 AC-11: 第三方 Agent G-Space 查询** | **QUERY_GSPACE → 返回正确指标值** |

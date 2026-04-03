@@ -1,10 +1,14 @@
 # 📊 UEWM training data strategy design document
 
-**Document version:** deliver-v1.1
+**Document version:** V2.0.1
 **Document number:** UEWM-DATA-008
-**Last update:** 2026-03-24
-**Status:** Design completed (100% coverage of R12 + Long Memory data life cycle)
-**Merge source:** Data Strategy V1.0 + V2.0 (Vector Quality) + V3.0 (PII/License) + V4.0 (Synthetic Tag/Rollback Cascade/Phase0 Plan) — Full Merge
+**Last update:** 2026-04-03
+**Status:** Design completed (100% coverage of R12 + Long Memory data life cycle + G-Space data management + GPU data pipeline)
+**Change History:**
+- V4.0/deliver-v1.0: Vector Quality, PII, License, Composition, Rollback, Phase 0
+- V1.0.1: GPU optimized data pipeline (§10.5)
+- V2.0.0: G-Space data collection/storage/life cycle, bridging training data requirements, PoC data collection plan
+- **V2.0.1: (LeWM integration) 256-d Z-Space vector, VoE test set, probe training data; fully merge V1.0.1 content, eliminate all reference dependencies**
 **Benchmarking requirements:** R12 (all), R01 (encoder data), R03 (evolution training data)
 
 ---
@@ -20,7 +24,7 @@ Define the training data sources, acquisition methods, quality requirements, ann
 ### 2.1 MVLS three layers (Phase 0)
 
 | Z-Layer | Data source | Data format | Pre-training base | Minimum sample size | Labeling method | Update frequency |
-|---------|----------|----------|-----------|-----------|----------|----------|
+|---------|---------|---------|---------|---------|---------|---------|
 | Z_impl | GitHub Top-10K repositories (Python/Go) | AST+CFG (Tree-sitter) | CodeBERT/StarCoder | 100K commit-level diff | Self-supervision (same repository, different commits) | Monthly increment |
 | Z_quality | Same as above warehouse CI/CD log | Test pass rate + coverage rate (Cobertura/JaCoCo XML) + execution time | Training from scratch (structured table) | 50K CI pipeline records | Self-supervision (same project timing) | Synchronization with Z_impl |
 | Z_phys | Public Prometheus dashboard + synthetic data | Prometheus time series format | TimesFM/Chronos | 10M time series data points | Self-supervision (time series prediction) + weak supervision (fault annotation) | Real-time collection |
@@ -28,7 +32,7 @@ Define the training data sources, acquisition methods, quality requirements, ann
 ### 2.2 Phase 1+ Extension Layer
 
 | Z-Layer | Data source | Pre-trained base | Challenge |
-|---------|---------|-----------|------|
+|---------|---------|---------|------|
 | Z_arch | Architecture document (README/ARCHITECTURE.md) + dependency graph (pom.xml/go.mod) | GraphSAGE+BERT | Document quality varies and requires manual screening |
 | Z_logic | Requirements Document/User Story/Jira Issue (requires desensitization) | BERT/RoBERTa | Requires desensitization data of partner companies |
 | Z_biz/Z_val/Z_market | Public financial reports + industry reports + product reviews | TabNet + FinBERT | Data is sparse and mainly relies on synthetic data |
@@ -60,7 +64,9 @@ Phase 0 allows synthetic data to account for ≤ 30% (used for data enhancement,
 
 Synthesis method: controlled perturbation of real data (code mutation, indicator noise injection). Synthetic data must be marked as synthetic and does not participate in the "real data" metrics evaluated by TRL.
 
-### 4.1 Synthetic data markup Schema```
+### 4.1 Synthetic data markup Schema
+
+```
 Synthetic data markup in Parquet Schema:
 
   Field: is_synthetic (bool, required)
@@ -81,13 +87,17 @@ DVC metadata tags:
   Each data version's manifest.json contains:
     "synthetic_ratio": 0.28, "synthetic_count": 28000, "real_count": 72000,
     "z_phys_synthetic_ratio": 0.55 // Z_phys layer separate statistics
-```---
+```
+
+---
 
 ## 5. Data version management
 
 The training data set is versioned (DVC). Each model version is associated with its training data version, supporting joint backtracking. When data is rolled back, the model version that depends on the data is automatically marked as "to be verified".
 
-### 5.1 Data rollback cascade automation```python
+### 5.1 Data rollback cascade automation
+
+```python
 class DataRollbackCascade:
     """Automatically mark dependent model versions when data is rolled back"""
     
@@ -102,7 +112,9 @@ class DataRollbackCascade:
                                       value="DATA_ROLLED_BACK_PENDING_VERIFICATION")
         # 3. Notification DEVOPS + 4. Audit log
     # DVC post-checkout hook integration: .dvc/hooks/post-checkout → python -m uewm.data.rollback_cascade
-```---
+```
+
+---
 
 ## 6. Data Compliance
 
@@ -125,8 +137,11 @@ Tools: scancode-toolkit (supports 200+ licenses). Whitelist: Apache-2.0, MIT, BS
 | Customer-level LoRA | Contract period +90 days | Synchronized with training data | LoRA weights (the basic model is not affected) |
 | Synthetic data | Consistent with the model version | 180 days after the model is abandoned | Corresponding to synthetic data |
 | Federated learning gradient aggregation | Keep only the aggregation results | — | Do not keep the original gradients of single items |
+| **G-Space indicator history** | **Real-time 30 days + 1 year history + archived forever** | **Never deleted (non-sensitive aggregated data)** | **V2.0** |
+| **Discovery Proposal Record** | **Permanent** | **None (required for audit)** | **V2.0** |
+| **Bridge function training data (Z,G pairing)** | **Consistent with model version** | **180 days after model abandonment** | **V2.0** |
 
-**[deliver-v1.1] Long-term memory data retention (Architecture §12):**
+**Long term memory data retention:**
 
 | Data categories | Hot (30 days) | Warm (180 days) | Cold (180 days+) | Delete rules |
 |---------|---------|----------|----------|---------|
@@ -142,7 +157,72 @@ Delete audit: source + scope + confirmation + associated model tag + integrity s
 
 ## 8. Phase 0 data collection plan
 
-### 8.1 Week-by-week planning```
+### 8.1 Phase 0A: PoC Data Collection (Week 1-2)
+
+```
+PoC data collection plan (new in V2.0, takes precedence over encoder training data):
+
+  Target repository: FastAPI, Gin, Prometheus (3)
+  Requirements: >5K stars, active CI, with Prometheus/Grafana metrics
+
+  G-Space data collection:
+    GitHub API → code.* Metrics (per commit)
+    GitHub Actions API → test.* metrics (per CI run)
+    SonarQube/tree-sitter → complexity, coupling (per commit)
+    local analysis → churn, hotspot, duplication (per commit)
+    
+    Target: ~2000 commits × ~80 G-Space metrics per repository
+    Storage: SQLite (PoC stage)
+    Format: Parquet (including timestamp, commit SHA, all indicators)
+
+Z-Space data acquisition (synchronized with G-Space):
+    per commit → Tree-sitter AST diff → CodeBERT embedding → projection header → 256-d Z_impl [V2.0.1: 256-d + projection header]
+    per CI run → test metric normalization → encoding → projection header → 256-d Z_quality [V2.0.1]
+    
+    Key: Z-Space and G-Space data must be aligned by commit SHA
+    In this way, the bridge function φ (Z → G) and the probe head (Z → single metric) can be trained [V2.0.1: + probe head]
+
+  [New in V2.0.1] VoE test data generation:
+    50 Normal scenario: Randomly sampled from real commit history
+    50 Abnormal Scenarios: Generated from Controlled Mutation of Real Data
+      - Indicator transfer (coverage mutation ±50pp)
+      - Causal contradiction (complexity↑ but coverage↑)
+      - Zero causal effect (zero commits but metric changes)
+    Storage: voe_test_set.parquet
+
+  Delivery:
+    g_space_fastapi.parquet, g_space_gin.parquet, g_space_prometheus.parquet
+    z_space_fastapi.parquet (256-d), z_space_gin.parquet, z_space_prometheus.parquet [V2.0.1: 256-d]
+    aligned_pairs.parquet (Z,G pairs, used to train φ and probe)
+    voe_test_set.parquet (100 scenarios) [V2.0.1]
+```
+
+### 8.2 Phase 0A: Bridging training data (Week 5-6)
+
+```
+Bridging function training data:
+  Input: aligned_pairs.parquet (Z vector + G index at the same time)
+  Training set: first 80% commits (time split)
+  Validation set: last 20% commits
+  
+  φ training:
+    Input: Z_impl (256-d, V2.0.1)
+    Output: code.* indicators (~15-d)
+    Loss: MSE
+    
+  ψ training:
+    Input: G-Space (80-d)
+    Output: Z constraint vector (256-d, V2.0.1)
+    Loss: Cosine similarity
+    
+  Consistency loss training:
+    Input: Z(t), G(t), Z(t+1)_predicted
+    Loss: α * MSE(φ(Z_pred), G_actual) + (1-α) * cosine(Z_pred, ψ(G_actual))
+```
+
+### 8.3 Phase 0B: Production data collection (original V1.0.1 weekly plan)
+
+```
 Week 1-2: Benchmark project selection and infrastructure
   Select 5-10 benchmark open source projects (>5K stars, active CI, Python/Go)
   Candidates: FastAPI, Gin, Django, Hugo, Terraform, Prometheus, Grafana
@@ -168,30 +248,34 @@ Week 9-10: Quality verification + data version release
 Person in charge: Data Engineer × 2
 Blocking risk: GitHub API current limit → apply for higher rate limit
 Blocking risk: Insufficient public data in Prometheus → synthetic data placeholder, Phase 1 replacement
-```---
+```
+
+---
 
 ## 9. Training data stage planning
 
-| Phase | Z-Layer | Data source | Target |
-|-------|----------|----------|------|
-| Phase 0 (M1-M4) | Z_impl, Z_quality, Z_phys | Open source GitHub + public Prometheus + synthesis | MVLS three-layer TRL-3 |
-| Phase 1 (M5-M7) | +Z_arch, Z_logic | Architecture document + desensitization requirement data | Core five layers TRL-3+ |
-| Phase 2 (M8-M10) | +Z_biz, Z_val, Z_market | Financial report + industry report + synthesis + customer data | Extended seven layers TRL-2+ |
-| Phase 3 (M11+) | Full 8 layers | Accumulate real customer data | Full layer TRL-4+ |
+| Phase | Z-Layer | G-Space Domain | Data Source | Target |
+|-------|----------|-----------|----------|------|
+| Phase 0A | Z_impl, Z_quality | code.*, test.* | 3 open source warehouse | PoC verification |
+| Phase 0B | + Z_phys | + ops.* | + Prometheus | MVLS TRL-3 + φ R² > 0.2 |
+| Phase 1 | + Z_arch, Z_logic | + process.* | + Architecture documentation + Jira | Core five layers |
+| Phase 2 | + Z_biz, Z_val, Z_market | (requires business data) | + financial report + customer data | All eight layers |
 
 ---
 
 ## 10. Vector quality automated verification pipeline
 
-### 10.1 Validation Rule Engine```python
+### 10.1 Validation Rule Engine
+
+```python
 class VectorQualityValidator:
     """Automated vector quality verification. Triggers: Post-encoder training/incremental import/synthetic generation/LoRA evolution/manual audit."""
     
     class QualityRules:
-        L2_NORM_MIN = 0.5;  L2_NORM_MAX = 2.0
-        NAN_RATIO_MAX = 0.0;  ZERO_VECTOR_RATIO_MAX = 0.01
-        MIN_VARIANCE_PER_DIM = 0.01;  MAX_AVG_COSINE_SIMILARITY = 0.7
-        MIN_PROJECTS = 1000;  MIN_LANGUAGES = 5;  MIN_LAYER_SAMPLE_RATIO = 0.5
+        L2_NORM_MIN = 0.5; L2_NORM_MAX = 2.0
+        NAN_RATIO_MAX = 0.0; ZERO_VECTOR_RATIO_MAX = 0.01
+        MIN_VARIANCE_PER_DIM = 0.01; MAX_AVG_COSINE_SIMILARITY = 0.7
+        MIN_PROJECTS = 1000; MIN_LANGUAGES = 5; MIN_LAYER_SAMPLE_RATIO = 0.5
     
     def validate_batch(self, vectors, metadata, layer_name) -> ValidationReport:
         # Rule 1: NaN detection (zero tolerance) → Rule 2: L2 norm range → Rule 3: All zero vectors
@@ -199,11 +283,15 @@ class VectorQualityValidator:
     
     def validate_dataset_coverage(self, dataset_manifest) -> ValidationReport:
         # Number of projects → Programming language coverage → Ratio of samples in each layer
-```### 10.2 Verification pipeline integration
+```
 
-Trigger source: DVC push hook → MLflow callback → LoRA post-check → manual CLI. Result: PASSED → Storage | WARNING → Storage + Alarm | FAILED → Blocking (NaN hard blocking, L2 abnormal soft blocking, cosine too high → increase VICReg).
+### 10.2 Verification pipeline integration
 
-### 10.3 Verification report format```json
+Trigger source: DVC push hook → MLflow callback → LoRA post-check → manual CLI. Result: PASSED → Storage | WARNING → Storage + Alarm | FAILED → Blocking (NaN hard blocking, L2 abnormal soft blocking, cosine too high → increase SIGReg).
+
+### 10.3 Verification report format
+
+```json
 {
   "report_id": "vqv-2026-03-22-Z_impl-v1.2",
   "layer": "Z_impl", "data_version": "v1.2", "model_version": "codbert-ft-v3",
@@ -216,7 +304,58 @@ Trigger source: DVC push hook → MLflow callback → LoRA post-check → manual
     {"name": "avg_cosine_similarity", "value": 0.52, "threshold": 0.70, "passed": true}
   ]
 }
-```---
+```
+
+### 10.5 GPU optimized data pipeline
+
+```
+Training data GPU optimization:
+
+  Data loading optimization:
+    PyTorch DataLoader: num_workers=4, pin_memory=True, prefetch_factor=2
+    Parquet column-based reading: load only the columns required for training (avoid full loading)
+    Memory mapping: Use mmap for large files to reduce memory copies
+    
+  Batch processing optimization:
+    Dynamic batch size: automatically adjusted based on available GPU memory
+    Gradient accumulation: Small memory devices (RTX 3060) use 4-8 steps of gradient accumulation to simulate large batches
+    Mixed precision data: input data remains FP32, encoder internally converts to BF16
+    
+  Encoder output buffer:
+    Cache Z vector after first encoding (256-d, ~1KB/sample, V2.0.1)
+    Reuse cache during alignment training to avoid repeated encoding
+    Cache invalidation: Automatically invalidate after the encoder weight is updated
+    Estimated savings: ~60% reduction in alignment training GPU time
+
+  Distributed data parallelism (Phase 2+, multiple GPUs):
+    DeepSpeed data parallelism
+    Data sharding: DistributedSampler shards by GPU
+    Communication optimization: gradient all-reduce overlap with backward
+```
+
+### 10.6 G-Space data quality (new in V2.0)
+
+```
+G-Space data quality rules:
+
+  Collection completeness:
+    At least 12/15 code.* indicators for each commit are valuable (80%)
+    At least 6/8 test.* metrics have values (75%) per CI run
+    At least 9/11 ops.* metrics have value per minute (82%)
+    
+  Anomaly detection:
+    Each indicator maintains μ and σ over a 30-day sliding window.
+    New value exceeds μ ± 3σ → marked as suspicious (not discarded immediately)
+    The suspicious value does not participate in the consistency loss calculation (to prevent T6 attacks)
+    Suspicious values are retained in G-Space for manual review
+    
+  Data alignment:
+    Z-Space and G-Space must be aligned by commit SHA + timestamp
+    Data with failed alignment does not participate in φ/ψ training
+    Alignment rate < 90% → Alarm (collector timing problem)
+```
+
+---
 
 ## 11. Acceptance criteria mapping
 
@@ -230,3 +369,7 @@ Trigger source: DVC push hook → MLflow callback → LoRA post-check → manual
 | R12 AC-6: Customer data deleted within 90 days | §7 | Deletion process testing |
 | R12 AC-7: KSL-0 Forgetting 100% (30 days) | EVO §10 | Forgetting Test: Delete → Zero Residue |
 | R12 AC-8: Machine Forgetting Policy Document Review | EVO §10 | Document Review Passed |
+| **R12 AC-9: Encoder cache reduces alignment training GPU time ≥50%** | **§10.5** | **A/B: With cache vs without cache** |
+| **R12 AC-10: G-Space acquisition integrity ≥80%** | **§10.6** | **Acquisition rate monitoring** |
+| **R12 AC-11: Z-G data alignment rate ≥90%** | **§10.6** | **Alignment check** |
+| **R12 AC-12: PoC Dataset Delivery (3 Warehouses × Z+G)** | **§8.1** | **Data Integrity Check** |
